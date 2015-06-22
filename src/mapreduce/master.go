@@ -30,41 +30,44 @@ func (mr *MapReduce) RunMaster() *list.List {
 	// Your code here
 	var mapChan, reduceChan = make(chan int, mr.nMap), make(chan int, mr.nReduce)
 
-	var sendMap = func(worker string, id int) {
+	var sendMap = func(worker string, id int) bool {
 		jobArgs := DoJobArgs{
 			File:          mr.file,
 			Operation:     Map,
 			JobNumber:     id,
 			NumOtherPhase: mr.nReduce,
 		}
-		jobReply := DoJobReply{}
-		call(worker, "Worker.DoJob", jobArgs, &jobReply)
-		mapChan <- id
-		mr.idleChannel <- worker
+		reply := DoJobReply{}
+		return call(worker, "Worker.DoJob", jobArgs, &reply)
 	}
 
-	var sendReduce = func(worker string, id int) {
+	var sendReduce = func(worker string, id int) bool {
 		jobArgs := DoJobArgs{
 			File:          mr.file,
 			Operation:     Reduce,
 			JobNumber:     id,
 			NumOtherPhase: mr.nMap,
 		}
-		jobReply := DoJobReply{}
-		call(worker, "Worker.DoJob", jobArgs, &jobReply)
-		reduceChan <- id
-		mr.idleChannel <- worker
+		reply := DoJobReply{}
+		return call(worker, "Worker.DoJob", jobArgs, &reply)
+
 	}
 
 	for i := 0; i < mr.nMap; i++ {
 		go func(id int) {
-			var worker string
-			select {
-			case worker = <-mr.registerChannel:
-			case worker = <-mr.idleChannel:
+			for {
+				var worker string
+				select {
+				case worker = <-mr.registerChannel:
+				case worker = <-mr.idleChannel:
+				}
+				ok := sendMap(worker, id)
+				if ok {
+					mapChan <- id
+					mr.idleChannel <- worker
+					break
+				}
 			}
-			sendMap(worker, id)
-
 		}(i)
 	}
 	for i := 0; i < mr.nMap; i++ {
@@ -74,12 +77,19 @@ func (mr *MapReduce) RunMaster() *list.List {
 
 	for i := 0; i < mr.nReduce; i++ {
 		go func(id int) {
-			var worker string
-			select {
-			case worker = <-mr.registerChannel:
-			case worker = <-mr.idleChannel:
+			for {
+				var worker string
+				select {
+				case worker = <-mr.registerChannel:
+				case worker = <-mr.idleChannel:
+				}
+				ok := sendReduce(worker, id)
+				if ok {
+					reduceChan <- id
+					mr.idleChannel <- worker
+					break
+				}
 			}
-			sendReduce(worker, id)
 		}(i)
 	}
 	for i := 0; i < mr.nReduce; i++ {
