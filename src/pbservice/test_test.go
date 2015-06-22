@@ -423,6 +423,7 @@ func checkAppends(t *testing.T, v string, counts []int) {
 		for j := 0; j < counts[i]; j++ {
 			wanted := "x " + strconv.Itoa(i) + " " + strconv.Itoa(j) + " y"
 			off := strings.Index(v, wanted)
+
 			if off < 0 {
 				t.Fatalf("missing element in Append result")
 			}
@@ -662,7 +663,7 @@ func TestConcurrentSameUnreliable(t *testing.T) {
 	time.Sleep(time.Second)
 }
 
-// constant put/get while crashing and restarting servers
+//constant put/get while crashing and restarting servers
 func TestRepeatedCrash(t *testing.T) {
 	runtime.GOMAXPROCS(4)
 
@@ -947,6 +948,7 @@ func proxy(t *testing.T, port string, delay *int32) {
 }
 
 func TestPartition1(t *testing.T) {
+	fmt.Println("hahah")
 	runtime.GOMAXPROCS(4)
 
 	tag := "part1"
