@@ -72,14 +72,14 @@ type Proposal struct {
 }
 
 type PaxosInstance struct {
-	Id       int
+	Pid      int
 	Decided  bool
 	Prepared string
 	Accepted Proposal
 }
 
 type PaxosArgs struct {
-	Id     int
+	Pid    int
 	PNum   string
 	PValue interface{}
 
@@ -105,28 +105,30 @@ func (px *Paxos) SelectMajority() []string {
 	hasChoosen := map[int]string{}
 	accetors := make([]string, 0)
 
+	//for i := 0; i < size; i++ {
 	for size > 0 {
 		for {
 			t := rand.Int() % total
-			if _, exist := hasChoosen[t]; !exist {
-				hasChoosen[t] = px.peers[t]
-				accetors = append(accetors, px.peers[t])
-				size--
-				break
+			if _, exist := hasChoosen[t]; exist {
+				continue
 			}
+			hasChoosen[t] = px.peers[t]
+			accetors = append(accetors, px.peers[t])
+			break
 		}
+		size--
 	}
 	return accetors
 }
 
-func (px *Paxos) GenerateProposalNumber() string {
+func (px *Paxos) GeneratePaxosNumber() string {
 	duration := time.Now().Sub(time.Date(2015, time.July, 10, 10, 26, 0, 0, time.UTC))
 	return strconv.FormatInt(duration.Nanoseconds(), 10) + "-" + strconv.Itoa(px.me)
 }
 
-func (px *Paxos) MakeInstance(id int) {
+func (px *Paxos) MakePaxosInstance(id int) {
 	px.instances[id] = &PaxosInstance{
-		Id:       id,
+		Pid:      id,
 		Decided:  false,
 		Prepared: INITNUM,
 		Accepted: Proposal{INITNUM, nil},
@@ -136,59 +138,42 @@ func (px *Paxos) MakeInstance(id int) {
 func (px *Paxos) ProcessPrepare(args *PaxosArgs, reply *PaxosReply) error {
 	px.mu.Lock()
 	defer px.mu.Unlock()
-	id := args.Id
+	id := args.Pid
 	pnum := args.PNum
-	//pvalue := args.PValue
 
 	reply.Result = REJECT
 	if _, exist := px.instances[id]; !exist {
-		px.MakeInstance(id)
+		px.MakePaxosInstance(id)
 		reply.Result = OK
-	} else {
-		if px.instances[id].Prepared < pnum {
-			reply.Result = OK
-		}
+	}
+	if px.instances[id].Prepared < pnum {
+		reply.Result = OK
 	}
 	if reply.Result == OK {
-
 		reply.PNum = px.instances[id].Accepted.PNum
 		reply.PValue = px.instances[id].Accepted.PValue
 		px.instances[id].Prepared = pnum
 	}
-	/* if _, exist := px.instances[id]; !exist {*/
-	//px.MakeInstance(id)
-	//reply.Result = OK
-	//}
-	//if px.instances[id].Prepared < pnum {
-	//px.instances[id].Prepared = pnum
-	//px.instances[id].Accepted = Proposal{pnum, pvalue}
-	//reply.Result = OK
-	//}
-	//reply.PNum = px.instances[id].Accepted.PNum
-	//reply.PValue = px.instances[id].Accepted.PValue
-
 	return nil
 }
 
 func (px *Paxos) SendPrepare(id int, clientV interface{}) (bool, []string, Proposal) {
-	pnum := px.GenerateProposalNumber()
+	pnum := px.GeneratePaxosNumber()
 	accetors := px.SelectMajority()
 
-	args := PaxosArgs{
-		Id:     id,
-		PNum:   pnum,
-		PValue: clientV,
-	}
-	reply := PaxosReply{}
-
-	retNum := pnum
+	retNum := INITNUM
 	retValue := clientV
 	success := make([]string, 0)
 	num := 0
 
-	//fmt.Println(accetors, args)
-
+	//can not define reply args and reply out of the loop, because the
+	//previous result will effect the next one in some cases
 	for _, accetor := range accetors {
+		args := PaxosArgs{
+			Pid:  id,
+			PNum: pnum,
+		}
+		reply := PaxosReply{Result: REJECT}
 		if accetor == px.peers[px.me] {
 			px.ProcessPrepare(&args, &reply)
 		} else {
@@ -203,8 +188,10 @@ func (px *Paxos) SendPrepare(id int, clientV interface{}) (bool, []string, Propo
 			num++
 		}
 	}
-	//return IsMajority(len(success)), success, Proposal(retNum, retValue)
-	return px.IsMajority(num), accetors, Proposal{pnum /*retNum*/, retValue}
+	//use pnum not retNum cause retNum is le pnum, and
+	//this just want to find the right proposer value
+	//if accetors has accepted a value, then propsal the value
+	return px.IsMajority(num), success, Proposal{pnum, retValue}
 }
 
 func (px *Paxos) ProcessAccept(args *PaxosArgs, reply *PaxosReply) error {
@@ -212,32 +199,29 @@ func (px *Paxos) ProcessAccept(args *PaxosArgs, reply *PaxosReply) error {
 	defer px.mu.Unlock()
 	reply.Result = REJECT
 
-	id := args.Id
+	id := args.Pid
 	pnum := args.PNum
 	pvalue := args.PValue
 	if _, exist := px.instances[id]; !exist {
-		px.MakeInstance(id)
+		px.MakePaxosInstance(id)
 	}
-	if px.instances[id].Prepared <= args.PNum {
-		//if px.instances[id].Accepted.PNum <= args.PNum {
+	if px.instances[id].Prepared <= pnum {
 		px.instances[id].Prepared = pnum
 		px.instances[id].Accepted = Proposal{pnum, pvalue}
 		reply.Result = OK
 	}
 	return nil
-
 }
 
 func (px *Paxos) SendAccept(id int, accetors []string, propsal Proposal) bool {
-	args := PaxosArgs{
-		Id:     id,
-		PNum:   propsal.PNum,
-		PValue: propsal.PValue,
-	}
-	reply := PaxosReply{}
 	num := 0
-
 	for _, accetor := range accetors {
+		args := PaxosArgs{
+			Pid:    id,
+			PNum:   propsal.PNum,
+			PValue: propsal.PValue,
+		}
+		reply := PaxosReply{}
 		if accetor == px.peers[px.me] {
 			px.ProcessAccept(&args, &reply)
 		} else {
@@ -251,32 +235,34 @@ func (px *Paxos) SendAccept(id int, accetors []string, propsal Proposal) bool {
 }
 
 func (px *Paxos) MakeDecision(id int, result Proposal) {
-	/*px.mu.Lock()*/
+	/* px.mu.Lock()*/
 	/*defer px.mu.Unlock()*/
+
+	//why cann't use lock???
 	if _, exist := px.instances[id]; !exist {
-		px.MakeInstance(id)
+		px.MakePaxosInstance(id)
 	}
-	px.instances[id].Decided = true
 	px.instances[id].Accepted = result
+	px.instances[id].Decided = true
 }
 
 func (px *Paxos) ProcessDecision(args *PaxosArgs, reply *PaxosReply) error {
 	px.mu.Lock()
 	defer px.mu.Unlock()
+
+	px.MakeDecision(args.Pid, Proposal{args.PNum, args.PValue})
 	px.dones[args.Me] = args.Done
-	px.MakeDecision(args.Id, Proposal{args.PNum, args.PValue})
 	return nil
 }
 
 func (px *Paxos) SendDecision(id int, result Proposal) {
 	args := PaxosArgs{
-		Id:     id,
+		Pid:    id,
 		PNum:   result.PNum,
 		PValue: result.PValue,
 		Done:   px.dones[px.me],
 		Me:     px.me,
 	}
-	//fmt.Println(args, id, result)
 
 	reply := PaxosReply{}
 	px.MakeDecision(id, result)
@@ -285,33 +271,18 @@ func (px *Paxos) SendDecision(id int, result Proposal) {
 			call(px.peers[i], "Paxos.ProcessDecision", &args, &reply)
 		}
 	}
-	/* for _, peer := range px.peers {*/
-	////fmt.Println("peer is :", peer)
-	//if peer == px.peers[px.me] {
-	//px.MakeDecision(id, result)
-	//} else {
-	//call(peer, "Paxos.ProcessDecision", &args, &reply)
-	//}
-	/*}*/
-	//fmt.Println("finish send decision")
 }
 
-func (px *Paxos) DoProposal(id int, clientV interface{}) {
-	i := 1
+func (px *Paxos) DoProposer(id int, clientV interface{}) {
 	for {
-		//fmt.Println(id, clientV)
 		ok, accetors, propsal := px.SendPrepare(id, clientV)
-		//fmt.Println(ok, accetors, propsal)
 		if ok {
 			ok = px.SendAccept(id, accetors, propsal)
 		}
-		//fmt.Println("accept is ok?", ok)
 		if ok {
 			px.SendDecision(id, propsal)
-			//fmt.Println("finish senddecision")
 			break
 		}
-		i++
 	}
 }
 
@@ -361,11 +332,10 @@ func call(srv string, name string, args interface{}, reply interface{}) bool {
 func (px *Paxos) Start(seq int, v interface{}) {
 	// Your code here.
 	go func() {
-		//fmt.Println("min is", px.Min(), seq)
 		if seq < px.Min() {
 			return
 		}
-		px.DoProposal(seq, v)
+		px.DoProposer(seq, v)
 	}()
 }
 
@@ -395,7 +365,6 @@ func (px *Paxos) Max() int {
 			largest = i
 		}
 	}
-
 	return largest
 }
 
@@ -460,7 +429,7 @@ func (px *Paxos) Status(seq int) (Fate, interface{}) {
 	px.mu.Lock()
 	defer px.mu.Unlock()
 	if _, exist := px.instances[seq]; !exist {
-		px.MakeInstance(seq)
+		px.MakePaxosInstance(seq)
 	}
 	if px.instances[seq].Decided == true {
 		return Decided, px.instances[seq].Accepted.PValue
