@@ -12,8 +12,16 @@ import "syscall"
 import "encoding/gob"
 import "math/rand"
 
+import "time"
 
-const Debug = 0
+const (
+	Debug = 0
+	GetOp = 1
+	PutOp = 2
+
+	Put    = "Put"
+	Append = "Append"
+)
 
 func DPrintf(format string, a ...interface{}) (n int, err error) {
 	if Debug > 0 {
@@ -22,11 +30,16 @@ func DPrintf(format string, a ...interface{}) (n int, err error) {
 	return
 }
 
-
 type Op struct {
 	// Your definitions here.
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
+	OpType    int
+	Key       string
+	Value     string
+	PutAppend string
+	Client    string
+	UUID      int64
 }
 
 type KVPaxos struct {
@@ -38,17 +51,104 @@ type KVPaxos struct {
 	px         *paxos.Paxos
 
 	// Your definitions here.
+	content   map[string]string
+	seen      map[string]int64
+	replies   map[string]string
+	processed int
 }
 
+func (kv *KVPaxos) WaitAgreement(seq int) Op {
+	to := time.Millisecond * 10
+	for {
+		decided, op := kv.px.Status(seq)
+		if decided == paxos.Decided {
+			return op.(Op)
+		}
+		time.Sleep(to)
+		if to < time.Second*10 {
+			to *= 2
+		}
+	}
+}
+
+func (kv *KVPaxos) Apply(seq int, op Op) {
+	previous, exist := kv.content[op.Key]
+	if !exist {
+		previous = ""
+	}
+
+	kv.replies[op.Client] = previous
+	kv.seen[op.Client] = op.UUID
+
+	if op.OpType == PutOp {
+		if op.PutAppend == Put {
+			kv.content[op.Key] = op.Value
+		} else {
+			kv.content[op.Key] = previous + op.Value
+		}
+	}
+	kv.processed++
+	kv.px.Done(kv.processed)
+}
+
+func (kv *KVPaxos) AddOp(op Op) string {
+
+	successed := false
+	for !successed {
+		//why must in the loop ????
+		uuid, exist := kv.seen[op.Client]
+		if exist && uuid == op.UUID {
+			return kv.replies[op.Client]
+		}
+
+		seq := kv.processed + 1
+		result := Op{}
+
+		decided, ret := kv.px.Status(seq)
+		if decided == paxos.Decided {
+			result = ret.(Op)
+		} else {
+			kv.px.Start(seq, op)
+			result = kv.WaitAgreement(seq)
+		}
+
+		successed = result.UUID == op.UUID
+		//apply the result not the op
+		//kv.Apply(seq, op)
+		kv.Apply(seq, result)
+	}
+	//return result.Value
+	return kv.replies[op.Client]
+}
 
 func (kv *KVPaxos) Get(args *GetArgs, reply *GetReply) error {
 	// Your code here.
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	op := Op{
+		OpType: GetOp,
+		Key:    args.Key,
+		Client: args.Me,
+		UUID:   args.UUID,
+	}
+
+	reply.Value = kv.AddOp(op)
 	return nil
 }
 
 func (kv *KVPaxos) PutAppend(args *PutAppendArgs, reply *PutAppendReply) error {
 	// Your code here.
-
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	op := Op{
+		OpType:    PutOp,
+		Key:       args.Key,
+		Value:     args.Value,
+		PutAppend: args.Op,
+		Client:    args.Me,
+		UUID:      args.UUID,
+	}
+	kv.AddOp(op)
 	return nil
 }
 
@@ -94,6 +194,10 @@ func StartServer(servers []string, me int) *KVPaxos {
 	kv.me = me
 
 	// Your initialization code here.
+	kv.content = map[string]string{}
+	kv.seen = map[string]int64{}
+	kv.replies = map[string]string{}
+	kv.processed = 0
 
 	rpcs := rpc.NewServer()
 	rpcs.Register(kv)
@@ -106,7 +210,6 @@ func StartServer(servers []string, me int) *KVPaxos {
 		log.Fatal("listen error: ", e)
 	}
 	kv.l = l
-
 
 	// please do not change any of the following code,
 	// or do anything to subvert it.

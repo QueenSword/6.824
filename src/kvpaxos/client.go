@@ -6,9 +6,13 @@ import "math/big"
 
 import "fmt"
 
+import "strconv"
+import "time"
+
 type Clerk struct {
 	servers []string
 	// You will have to modify this struct.
+	Me string
 }
 
 func nrand() int64 {
@@ -22,6 +26,7 @@ func MakeClerk(servers []string) *Clerk {
 	ck := new(Clerk)
 	ck.servers = servers
 	// You'll have to add code here.
+	ck.Me = strconv.FormatInt(nrand(), 10)
 	return ck
 }
 
@@ -66,7 +71,24 @@ func call(srv string, rpcname string,
 //
 func (ck *Clerk) Get(key string) string {
 	// You will have to modify this function.
-	return ""
+	args := GetArgs{
+		Key:  key,
+		Me:   ck.Me,
+		UUID: nrand(),
+	}
+	reply := GetReply{}
+
+	successed := false
+	serverIndex := 0
+	for !successed {
+		successed = call(ck.servers[serverIndex], "KVPaxos.Get", args, &reply)
+		if successed {
+			return reply.Value
+		}
+		serverIndex = (serverIndex + 1) % len(ck.servers)
+		time.Sleep(time.Second)
+	}
+	return reply.Value
 }
 
 //
@@ -74,6 +96,25 @@ func (ck *Clerk) Get(key string) string {
 //
 func (ck *Clerk) PutAppend(key string, value string, op string) {
 	// You will have to modify this function.
+	args := PutAppendArgs{
+		Key:   key,
+		Value: value,
+		Op:    op,
+		Me:    ck.Me,
+		UUID:  nrand(),
+	}
+	reply := PutAppendReply{}
+
+	successed := false
+	serverIndex := 0
+	for !successed {
+		successed = call(ck.servers[serverIndex], "KVPaxos.PutAppend", args, &reply)
+		if successed {
+			return
+		}
+		serverIndex = (serverIndex + 1) % len(ck.servers)
+		time.Sleep(time.Second)
+	}
 }
 
 func (ck *Clerk) Put(key string, value string) {
